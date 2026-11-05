@@ -10,7 +10,6 @@ Env:
   NTFY_TOPIC   required unless --dry-run. Pick something unguessable.
   NTFY_SERVER  optional, defaults to https://ntfy.sh
   TZ_NAME      optional, defaults to America/Los_Angeles
-  CLICK_URL    optional, page opened when you tap the notification
 """
 import argparse
 import json
@@ -23,7 +22,6 @@ from zoneinfo import ZoneInfo
 
 BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 STATE = Path(__file__).with_name("notified.json")
-DEFAULT_CLICK = "https://www.espn.com/nba/scoreboard"
 
 
 def get(url):
@@ -88,9 +86,8 @@ def top_performers(game_id, n=2):
 
 
 def send(title, body, dry):
-    click = os.environ.get("CLICK_URL", DEFAULT_CLICK)
     if dry:
-        print(f"[{title}]\n{body}\n(click: {click})\n")
+        print(f"[{title}]\n{body}\n")
         return
     topic = os.environ["NTFY_TOPIC"]
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
@@ -99,8 +96,6 @@ def send(title, body, dry):
         headers={
             "Title": title,  # headers must stay ASCII, emoji go in the body
             "Tags": "basketball",
-            "Click": click,
-            "Actions": f"view, Box scores, {click}",
         }, method="POST")
     urllib.request.urlopen(req, timeout=20).read()
 
