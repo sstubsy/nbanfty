@@ -10,6 +10,7 @@ Env:
   NTFY_TOPIC   required unless --dry-run. Pick something unguessable.
   NTFY_SERVER  optional, defaults to https://ntfy.sh
   TZ_NAME      optional, defaults to America/Los_Angeles
+  CLICK_URL    optional, page opened when you tap the notification
 """
 import argparse
 import json
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 STATE = Path(__file__).with_name("notified.json")
+DEFAULT_CLICK = "https://www.espn.com/nba/scoreboard"
 
 
 def get(url):
@@ -40,8 +42,6 @@ def todays_games(tz):
         games.append({
             "id": ev["id"],
             "final": ev["status"]["type"]["completed"],
-            "live": ev["status"]["type"]["state"] == "in",
-            "detail": ev["status"]["type"].get("shortDetail", ""),
             "away": teams["away"]["team"]["abbreviation"],
             "home": teams["home"]["team"]["abbreviation"],
             "away_score": int(teams["away"].get("score") or 0),
@@ -50,8 +50,13 @@ def todays_games(tz):
     return games
 
 
-def score_line(g):
-    return f"{g['away']} {g['away_score']}, {g['home']} {g['home_score']}"
+def score_line(g, flair=False):
+    """Winner first. flair=True adds a fire emoji for games decided by 3 or less."""
+    a = (g["away"], g["away_score"])
+    h = (g["home"], g["home_score"])
+    w, l = (a, h) if a[1] > h[1] else (h, a)
+    close = " \U0001F525" if flair and abs(a[1] - h[1]) <= 3 else ""
+    return f"{w[0]} {w[1]}, {l[0]} {l[1]}{close}"
 
 
 def top_performers(game_id, n=2):
@@ -75,22 +80,28 @@ def top_performers(game_id, n=2):
                 stl, blk, to = num("STL"), num("BLK"), num("TO")
                 impact = pts + 1.2 * reb + 1.5 * ast + 3 * stl + 3 * blk - to
                 out.append((impact, f"{a['athlete']['displayName']} ({abbr}) "
-                                    f"{pts}p {reb}r {ast}a" +
-                                    (f" {blk}b" if blk >= 3 else "") +
-                                    (f" {stl}s" if stl >= 3 else "")))
+                                    f"{pts} pts, {reb} reb, {ast} ast" +
+                                    (f", {blk} blk" if blk >= 3 else "") +
+                                    (f", {stl} stl" if stl >= 3 else "")))
     out.sort(reverse=True)
     return [line for _, line in out[:n]]
 
 
 def send(title, body, dry):
+    click = os.environ.get("CLICK_URL", DEFAULT_CLICK)
     if dry:
-        print(f"[{title}]\n{body}\n")
+        print(f"[{title}]\n{body}\n(click: {click})\n")
         return
     topic = os.environ["NTFY_TOPIC"]
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
     req = urllib.request.Request(
         f"{server}/{topic}", data=body.encode("utf-8"),
-        headers={"Title": title, "Tags": "basketball"}, method="POST")
+        headers={
+            "Title": title,  # headers must stay ASCII, emoji go in the body
+            "Tags": "basketball",
+            "Click": click,
+            "Actions": f"view, Box scores, {click}",
+        }, method="POST")
     urllib.request.urlopen(req, timeout=20).read()
 
 
@@ -118,17 +129,17 @@ def main():
         if not finals:
             print("No finished games yet.")
             return
-        lines = [score_line(g) for g in finals]
         best = []
         for g in finals:
             try:
                 best += top_performers(g["id"], 1)
-            except Exception as e:  # box score missing for a game is not fatal
+            except Exception as e:  # a missing box score is not fatal
                 print(f"skip box score {g['id']}: {e}", file=sys.stderr)
-        body = "\n".join(lines)
+        body = "\U0001F3C0 Final scores\n" + "\n".join(
+            score_line(g, flair=True) for g in finals)
         if best:
-            body += "\n\nTop performers\n" + "\n".join(best)
-        send(f"NBA finals ({len(finals)} games)", body, args.dry_run)
+            body += "\n\n\u2B50 Top performers\n" + "\n".join(best)
+        send(f"NBA recap: {len(finals)} games", body, args.dry_run)
         print("Sent digest:", len(finals), "games")
         return
 
@@ -136,9 +147,9 @@ def main():
     for g in finals:
         if g["id"] in seen:
             continue
-        body = score_line(g)
+        body = score_line(g, flair=True)
         try:
-            body += "\n" + "\n".join(top_performers(g["id"], 2))
+            body += "\n\u2B50 " + "\n\u2B50 ".join(top_performers(g["id"], 2))
         except Exception as e:
             print(f"skip box score {g['id']}: {e}", file=sys.stderr)
         send("Final: " + score_line(g), body, args.dry_run)
