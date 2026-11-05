@@ -129,6 +129,7 @@ def main():
         if best:
             body += "\n\nTop performers\n" + "\n".join(best)
         send(f"NBA finals ({len(finals)} games)", body, args.dry_run)
+              print("Sent digest:", len(finals), "games")
         return
 
     seen = load_state()
